@@ -838,7 +838,7 @@ input[type=range]::-moz-range-thumb{
           <button class="mini" id="btnSettings">设置</button>
         </div>
 
-        <div class="home-ver">ENGINE v2.2 · 淡蓝 · 数据驱动</div>
+        <div class="home-ver">ENGINE v2.3 · 淡蓝 · 数据驱动</div>
       </div>
     </section>
 
@@ -1268,6 +1268,8 @@ let bondEditMode = false;
 let bondFilter = '全部';
 let profileTab = 'cash';
 let wsType = 'chapter';
+/* 防止重复压栈：只有「第一次进入某个节点索引」才记录 */
+let _lastSnapKey = null;
 
 function freshAttrs(){
   const o = {};
@@ -1410,6 +1412,7 @@ function renderChoices(st){
 }
 
 /* ================= 流程 ================= */
+function snapKey(){ return S.chId + '::' + S.node + '::' + S.idx; }
 function snapshot(){
   return {
     chId:S.chId, node:S.node, idx:S.idx,
@@ -1417,11 +1420,18 @@ function snapshot(){
     log:S.log.slice(), awaiting:S.awaiting, ended:S.ended
   };
 }
-function pushHistory(){ history.push(snapshot()); if(history.length>400) history.shift(); }
+function pushHistory(force){
+  const k = snapKey();
+  if(!force && k === _lastSnapKey) return;
+  history.push(snapshot());
+  _lastSnapKey = k;
+  if(history.length>600) history.shift();
+}
 function restore(snap){
   S.chId=snap.chId; S.node=snap.node; S.idx=snap.idx;
   S.attrs=snap.attrs; S.flags=snap.flags; S.log=snap.log;
   S.awaiting=snap.awaiting; S.ended=snap.ended;
+  _lastSnapKey = null;
   hideOverlay();
   clearChoices();
   renderLog();
@@ -1498,6 +1508,9 @@ function choose(o){
   if(o.once && o.key) S.flags['opt_'+o.key]=true;
   if(o.to) gotoNode(o.to);
   else S.idx++;
+  /* 分支之后，让 history 记录一条“选择后的新状态” */
+  _lastSnapKey = null;
+  pushHistory(true);
   step();
   save();
 }
@@ -1574,20 +1587,24 @@ function showOverlay(tag, title, desc, actions){
 }
 function hideOverlay(){ if(ov) ov.classList.remove('is-on'); }
 
-/* ================= 回退 ================= */
+/* ================= 回退（可一直退到开头） ================= */
 function rewind(){
-  if(!history.length) return;
+  if(!history.length){ toast('已经是最开始了'); return; }
   sfx('tick');
-  restore(history.pop());
+  const snap = history.pop();
+  _lastSnapKey = null;
+  restore(snap);
   renderHud();
   save();
 }
 function rewindToChoice(){
-  while(history.length){
+  let guard = 0;
+  while(history.length && guard++ < 2000){
     const snap = history.pop();
     const ch = Game.chapters[snap.chId];
     const node = ch && ch.nodes[snap.node];
     const st = node && (node.steps||[])[snap.idx];
+    _lastSnapKey = null;
     restore(snap);
     if(st && st.t==='c'){
       S.awaiting=true;
@@ -1615,6 +1632,7 @@ function startChapter(chId, opts){
     S.flags = {};
   }
   history = [];
+  _lastSnapKey = null;
   clearChoices();
   stage.innerHTML = '';
   hideOverlay();
@@ -1656,6 +1674,7 @@ function loadSave(){
     S.log=d.log||[];
     S.ended=false; S.awaiting=false; S.transient=false;
     history = [];
+    _lastSnapKey = null;
     renderHud(); renderLog(); updateChapterTitle();
     step();
     return true;
@@ -1684,6 +1703,7 @@ function loadSlot(i){
   S.attrs = slot.attrs; S.flags = slot.flags || {}; S.log = slot.log || [];
   S.ended = false; S.awaiting = false; S.transient = false;
   history = [];
+  _lastSnapKey = null;
   hideOverlay();
   closeSlots();
   renderHud(); renderLog(); updateChapterTitle();
@@ -2725,7 +2745,7 @@ function defineBuiltin(){
     lines:[
       {who:'卡什', x:"Fashion, obviously.", tr:'当然是时尚啊。'},
       {who:'卡什', x:"What, you don't like it? Too bad.", tr:'怎么，你不喜欢？忍着。'},
-      {who:'你', x:'……没有，就是好奇。'},
+      {who:'你', x:"...No, just curious."},
       {who:'卡什', x:"Everyone's curious about something.", tr:'每个人都会对什么东西好奇。'},
       {who:'卡什', x:"Let's keep it that way, alright?", tr:'就这样保持吧，好吗？'}
     ]});
@@ -2736,7 +2756,7 @@ function defineBuiltin(){
       {who:'卡什', x:"Red, and custom paint. Took me two months to get it right.", tr:'红色，以及优秀的定制涂装。这花了我两个月噢～'},
       {who:'卡什', x:"Best thing I brought from home.", tr:'它是我带过来的最好的家伙。'},
       {who:'卡什', x:"Wanna ride sometime? I drive fast.", tr:'想不想哪天出去兜一圈？我开很快的。'},
-      {who:'你', x:'……多快？'},
+      {who:'你', x:"...How fast?"},
       {who:'卡什', x:"Fast enough to make you forget every thing!", tr:'快到让你忘掉一切！'},
     ]});
   regBond({id:'bt_work', order:4, category:'日常', need:8, reward:2,
@@ -2782,11 +2802,11 @@ function defineBuiltin(){
       {who:'卡什', x:"I can't see very well. Glasses aren't just for show.", tr:'我视力不太好……墨镜不只是为了帅。'},
       {who:'卡什', x:"Honestly, my eyesight's pretty bad.", tr:'说实在的，其实可以说是很糟糕。'},
       {who:'卡什', x:"...Don't make it weird, alright?", tr:'……别搞得怪怪的，行吗？'},
-      {who:'你', x:'嗯。'},
+      {who:'你', x:"...Okay."},
       {who:'卡什', x:"Thanks.", tr:'谢了。'}
     ]});
 
-  /* ================= 第一章（新版） ================= */
+  /* ================= 第一章 ================= */
   Game.defineChapter({
     id:'ch01', order:1, mode:'main',
     title:'第一章 · 新家与新室友',
@@ -2843,7 +2863,7 @@ function defineBuiltin(){
       },
       en:{
         steps:[
-          {t:'s', who:'你', x:"Yeah, that's me. Come in."},
+          {t:'s', who:'你', x:"Yeah, that's me. Come in.", tr:'嗯，是我。进来吧。'},
           {t:'n', x:'他咧嘴一笑，你这才发觉他嘴角有一颗痣，跟着笑容上扬。'},
           {t:'s', who:'卡什', x:"Jesus, you can speak English? Thank god.", tr:'天，你会说英语？谢天谢地。'},
           {t:'n', x:'……糟糕的是，看上去你们以后都必须用英语交流了。'}
@@ -2852,7 +2872,7 @@ function defineBuiltin(){
       },
       zh:{
         steps:[
-          {t:'s', who:'你', x:'嗯，是我。进来吧。'},
+          {t:'s', who:'你', x:"Uh, yeah. That's me. Come in.", tr:'呃，是我。进来吧。'},
           {t:'n', x:'他歪了歪头，神情有些不知所措。'},
           {t:'s', who:'卡什', x:"Uh... huh?", tr:'呃……啊？'},
           {t:'s', who:'卡什', x:"Sorry dude, my Chinese is, like, basically zero.", tr:'抱歉哥们，我的中文水平，差不多，等于零。'},
@@ -2904,10 +2924,10 @@ function defineBuiltin(){
         steps:[
           {t:'hr'},
           {t:'n', x:'你看着他拖着行李箱推开门，随即与一个光秃秃的床板大眼对小眼，准确来说只是他单方面的懵逼地盯着看。'},
-          {t:'s', who:'卡什', x:"Oh my, So this is... Uh, Do all Chinese people sleep like this...?", tr:'我天……所以这是……呃，中国人都是这样睡觉的吗？'},
+          {t:'s', who:'卡什', x:"Oh my. So this is... Uh, do all Chinese people sleep like this...?", tr:'我天……所以这是……呃，中国人都是这样睡觉的吗？'},
           {t:'n', x:'……这是个傻逼，尽管这不太礼貌，但你的脑子还是迅速给这个人的形象做了处理并下发结论。'},
           {t:'n', x:'但不管怎么说你深吸一口气经历了某种忏悔后开口。'},
-          {t:'s', who:'你', x:'……不是，只是没有配床垫。'},
+          {t:'s', who:'你', x:"...No. It's just — there's no mattress yet.", tr:'……不是，只是还没有配床垫。'},
           {t:'s', who:'卡什', x:"Oh... uh, sorry.", tr:'噢……呃，不好意思。'},
           {t:'n', x:'太过尴尬而激发出的礼貌让你对他的傻逼印象有所回温。'},
           {t:'n', x:'你看见卡什的眼神肉眼可见地从一副难评又含有某种「兄弟我可以理解」的惊诧变成尴尬，从而转过头去准备看起来像若无其事地在做自己的事。'},
@@ -2932,10 +2952,10 @@ function defineBuiltin(){
       },
       share_yes:{
         steps:[
-          {t:'s', who:'你', x:'可以，晚上你再过来吧。'},
+          {t:'s', who:'你', x:"Sure. Come by tonight.", tr:'可以，晚上你再过来吧。'},
           {t:'n', x:'你没有再继续为难他的意思，毕竟室友嘛，能帮一点是一点，再说也不是什么大事。'},
           {t:'n', x:'卡什勾起嘴角朝你笑着，得寸进尺地勾住你的肩膀，配上一头在灯下看起来闪着亮光的金发，明媚张扬到不自知地夺人视线。'},
-          {t:'s', who:'卡什', x:"No problem, Thanks, dude.", tr:'谢了！兄弟。'},
+          {t:'s', who:'卡什', x:"No problem. Thanks, dude.", tr:'谢了！兄弟。'},
           {t:'hr'},
           {t:'n', x:'晚上十点。'},
           {t:'n', x:'你刚洗完澡出来，头发还滴着水，就听见有人在敲门。'},
@@ -2950,9 +2970,9 @@ function defineBuiltin(){
           {t:'n', x:'你房间还很朴素，只有一张床、一张桌、一把椅子。'},
           {t:'n', x:'你把椅子拉到床边，正准备坐下，回头却看见卡什已经把枕头往你床上一扔，整个人大剌剌地坐在了床沿。'},
           {t:'s', who:'卡什', x:"So... which side is mine?", tr:'那……哪边是我的？'},
-          {t:'s', who:'你', x:'……你睡地上。'},
+          {t:'s', who:'你', x:"...You sleep on the floor.", tr:'……你睡地上。'},
           {t:'s', who:'卡什', x:"What? No way. I'm a guest, friend!", tr:'什么？不行。我是客人啊朋友。'},
-          {t:'s', who:'你', x:'你也住这儿，理论上不算客人。'},
+          {t:'s', who:'你', x:"You live here too. Technically you're not a guest.", tr:'你也住这儿，理论上不算客人。'},
           {t:'s', who:'卡什', x:"Uh, fair enough.", tr:'呃，有道理。'},
           {t:'n', x:'他嘴上说着，却完全没有起身的意思，反倒往床头一靠，手肘支在床头，手掌托着下巴看向你。'},
           {t:'s', who:'卡什', x:"Okay fine, I'll sleep on the floor. But let me stay like this for five minutes.", tr:'好吧好吧，我睡地板。但让我这样躺五分钟。'},
@@ -2968,11 +2988,11 @@ function defineBuiltin(){
       },
       share_no:{
         steps:[
-          {t:'s', who:'你', x:'？Are you kidding me?'},
+          {t:'s', who:'你', x:"? Are you kidding me?", tr:'？你在逗我？'},
           {t:'n', x:'他耸了耸肩。'},
           {t:'s', who:'卡什', x:"Alright, so heartless, babe...", tr:'好吧，真是无情啊宝贝儿……'},
-          {t:'s', who:'你', x:'……'},
-          {t:'s', who:'你', x:"Don't call me that."},
+          {t:'s', who:'你', x:"..."},
+          {t:'s', who:'你', x:"Don't call me that.", tr:'别那么叫我。'},
           {t:'n', x:'你已经失去了一切的力气和手段，只想扇一巴掌面前这个举止轻浮的人。'},
           {t:'n', x:'理智阻止了你这么做，但同时，你觉得你拒绝这家伙是一个明智的选择。'},
           {t:'n', x:'卡什看你半天没松口，终于还是耸了耸肩，退让一步。'},
