@@ -838,7 +838,7 @@ input[type=range]::-moz-range-thumb{
           <button class="mini" id="btnSettings">设置</button>
         </div>
 
-        <div class="home-ver">ENGINE v2.1 · 淡蓝 · 数据驱动</div>
+        <div class="home-ver">ENGINE v2.2 · 淡蓝 · 数据驱动</div>
       </div>
     </section>
 
@@ -990,6 +990,59 @@ function toast(msg){
   el.classList.add('show');
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(()=>el.classList.remove('show'), 1900);
+}
+
+/* ================= 音效引擎 ================= */
+const SFX = {
+  tick:  {freq:1040, dur:0.045, type:'sine',     gain:0.045, slide:0.72},
+  click: {freq:680,  dur:0.07,  type:'triangle', gain:0.060, slide:1.45},
+  pop:   {freq:520,  dur:0.16,  type:'sine',     gain:0.065, slide:1.60},
+  level: {freq:660,  dur:0.55,  type:'sine',     gain:0.090, slide:2.20},
+  ok:    {freq:880,  dur:0.13,  type:'sine',     gain:0.065, slide:1.35},
+  bad:   {freq:320,  dur:0.18,  type:'sine',     gain:0.060, slide:0.62}
+};
+let _actx = null;
+function audioCtx(){
+  if(_actx){
+    if(_actx.state === 'suspended'){ try{ _actx.resume(); }catch(e){} }
+    return _actx;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if(!AC) return null;
+  try{ _actx = new AC(); }catch(e){ return null; }
+  return _actx;
+}
+function sfx(kind){
+  if(!config.sound) return;
+  const ctx = audioCtx();
+  if(!ctx) return;
+  const p = SFX[kind] || SFX.click;
+  const t0 = ctx.currentTime;
+  const vol = Math.max(0, Math.min(1, (config.volume==null?0.7:config.volume))) * p.gain;
+  if(vol <= 0.0001) return;
+  try{
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = p.type || 'sine';
+    osc.frequency.setValueAtTime(p.freq, t0);
+    if(p.slide){
+      osc.frequency.exponentialRampToValueAtTime(Math.max(40, p.freq * p.slide), t0 + p.dur);
+    }
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + p.dur);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + p.dur + 0.05);
+  }catch(e){}
+}
+/* 全局按钮点击音 */
+function bindGlobalSfx(){
+  document.addEventListener('click', function(e){
+    const t = e.target;
+    if(!t || !t.closest) return;
+    const el = t.closest('button, .switch, .ch-card, .bond-topic, .side-card, .bond-cat, .profile-tab, .ws-type, .tab');
+    if(el) sfx('click');
+  }, true);
 }
 
 /* ================= 属性 ================= */
@@ -1173,7 +1226,8 @@ let progress = {completed:{}};
 let unlockedAch = new Set();
 let saveData = null;
 let config = {
-  typewriter:true, speed:26, fontSize:1, dark:false, crt:false, showLevelUp:true
+  typewriter:true, speed:26, fontSize:1, dark:false, crt:false, showLevelUp:true,
+  sound:true, volume:0.7
 };
 
 function loadAll(){
@@ -1260,6 +1314,7 @@ function checkLevelUp(oldVal, newVal){
   if(!config.showLevelUp) return;
   const wrap = $('#levelUpWrap');
   if(!wrap) return;
+  sfx('level');
   wrap.innerHTML =
     '<div class="lu-card">' +
       '<div class="lu-small">好感度等级提升</div>' +
@@ -1384,9 +1439,10 @@ function currentStep(){
   if(!node) return null;
   return (node.steps||[])[S.idx] || null;
 }
-function advance(){
+function advance(silent){
   if(S.awaiting||S.ended||!S.chId) return;
   pushHistory();
+  if(!silent) sfx('tick');
   step();
   save();
 }
@@ -1501,6 +1557,7 @@ function finish(st){
 const ov = $('#ov');
 function showOverlay(tag, title, desc, actions){
   if(!ov) return;
+  sfx('pop');
   $('#ovTag').textContent = tag;
   $('#ovTitle').textContent = title;
   $('#ovDesc').textContent = desc || '';
@@ -1520,6 +1577,7 @@ function hideOverlay(){ if(ov) ov.classList.remove('is-on'); }
 /* ================= 回退 ================= */
 function rewind(){
   if(!history.length) return;
+  sfx('tick');
   restore(history.pop());
   renderHud();
   save();
@@ -1845,6 +1903,7 @@ function openBondTopic(id){
 function advanceBondChat(){
   if(!bondChat.lines.length) return;
   if(bondChat.idx >= bondChat.lines.length) return;
+  sfx('tick');
   bondChat.idx++;
   renderBondTab();
 }
@@ -2094,7 +2153,7 @@ function applyCode(){
     }
   };
   try{ new Function('Game', code)(probeGame); }
-  catch(err){ showMsg('✘ 出错了：' + err.message, 'err'); return; }
+  catch(err){ showMsg('✘ 出错了：' + err.message, 'err'); sfx('bad'); return; }
 
   const chIds = Object.keys(probe.chapters);
   const bIds = Object.keys(probe.bonds);
@@ -2105,6 +2164,7 @@ function applyCode(){
 
   if(!chIds.length && !bIds.length && !pIds.length && !aIds.length && !dIds.length && !lv){
     showMsg('✘ 代码里没有找到任何 Game.defineXxx(...) 调用。', 'err');
+    sfx('bad');
     return;
   }
 
@@ -2142,6 +2202,7 @@ function applyCode(){
   if(lv) parts.push('等级表 ' + lv.length + ' 级');
 
   showMsg('✔ 导入成功，已永久保存。' + parts.join('，') + '。', 'ok');
+  sfx('ok');
 
   renderRecords();
   renderChapterList();
@@ -2276,6 +2337,14 @@ function openSettings(){
       <input type="range" min="0.85" max="1.3" step="0.05" value="${config.fontSize}" data-k="fontSize">
     </div>
     <div class="set-row">
+      <div class="set-name">音效<small>点击 / 选项 / 升级的轻提示音</small></div>
+      <div class="switch ${config.sound?'on':''}" data-k="sound"></div>
+    </div>
+    <div class="set-row">
+      <div class="set-name">音效音量<small>拖动即时试听</small></div>
+      <input type="range" min="0" max="1" step="0.05" value="${config.volume}" data-k="volume">
+    </div>
+    <div class="set-row">
       <div class="set-name">深色模式<small>夜间护眼</small></div>
       <div class="switch ${config.dark?'on':''}" data-k="dark"></div>
     </div>
@@ -2296,12 +2365,14 @@ function openSettings(){
         el.classList.toggle('on', config[k]);
         applyConfig();
         persist(KEYS.CONFIG, config);
+        if(k==='sound' && config.sound) sfx('ok');
       };
     } else {
       el.oninput = ()=>{
         config[k] = parseFloat(el.value);
         applyConfig();
         persist(KEYS.CONFIG, config);
+        if(k==='volume') sfx('tick');
       };
     }
   });
@@ -2459,7 +2530,7 @@ function bindAll(){
           btn.classList.remove('on'); btn.textContent='▷ 自动';
           return;
         }
-        advance();
+        advance(true);
       }, 1300);
     }
   };
@@ -2529,6 +2600,7 @@ function bindAll(){
     renderRecords(); renderChapterList(); renderBondTab();
     renderProfile(); renderSideList(); renderEndings(); renderHome();
     showMsg('✔ 成功导入 ' + ok + ' 个代码包，已永久保存。', 'ok');
+    sfx('ok');
   };
   const bw = $('#btnWipe');       if(bw) bw.onclick = ()=>{
     if(!userDefs.length){ showMsg('本来就没有导入内容。', 'err'); return; }
@@ -2613,21 +2685,21 @@ function defineBuiltin(){
     title:'Zippo 打火机',
     content:'背面刻着一个模糊的缩写，被磨掉了一半。\n他从不点烟，只是转着玩。'});
   Game.defineProfile({id:'it_bill', kind:'item', order:4, unlock:35,
-    title:'西尔酒馆的账单',
+    title:'罗曼酒馆的账单',
     content:'厚厚一沓。最上面一张的日期，是他家出事的那天。\n那天他点了最便宜的一杯。'});
 
   Game.defineProfile({id:'rel_adrian', kind:'relation', order:1, unlock:0,
-    title:'阿德里安',
-    subtitle:'乐队队友 · 铁哥们',
-    content:'一起组过小乐队。仗义，酷，是那种话不多但永远会在的人。'});
+    title:'Adrian Reyes（阿德里安·雷耶斯）',
+    subtitle:'乐队队友 · 好哥们',
+    content:'美国本地人，黑色卷发，是一个乐队的小乐手，偶尔唱点摇滚，年轻气盛。身上打了各种钉子的“钉子户”，但其实没看上去的那么不好接近。'});
   Game.defineProfile({id:'rel_cecil', kind:'relation', order:2, unlock:10,
-    title:'塞西尔',
-    subtitle:'西尔酒馆 · 调酒师',
-    content:'两人曾在小酒馆驻唱。卡什极喜欢塞西尔吹的萨克斯。'});
+    title:'Cecil Firth（塞西尔·弗思）',
+    subtitle:'调酒师 · 好哥们',
+    content:'美国籍的英国人，浅褐色发，在一家欧式复古小酒馆当调酒师，一个很喜欢听古典爵士乐的“绅士”。会吹萨克斯，卡什很喜欢他吹的萨克斯。信基督教。'});
   Game.defineProfile({id:'rel_you', kind:'relation', order:3, unlock:0,
-    title:'小桁',
-    subtitle:'室友',
-    content:'互相「掐」的日常关系。卡什喝醉时，小桁会负责把他的嘴闭上。'});
+    title:'莫桁',
+    subtitle:'室友 · ？？？',
+    content:'？？？（暂未解锁）'});
 
   Game.defineProfile({id:'pf_you_basic', kind:'self', order:1, unlock:0,
     title:'基础资料',
@@ -2642,11 +2714,11 @@ function defineBuiltin(){
   regBond({id:'bt_why', order:1, category:'日常', need:0, reward:2,
     name:'「你为什么来中国？」',
     lines:[
-      {who:'卡什', x:"Long story, roomie.", tr:'说来话长，室友。'},
-      {who:'卡什', x:"My old man got tired of me maxing out his cards.", tr:'我爸被我刷爆卡刷烦了。'},
-      {who:'卡什', x:"So he shipped me over here. 'International expansion', he said.", tr:'然后就把我打包扔过来了。他说这叫“国际拓展”。'},
-      {who:'卡什', x:"Whatever. At least the rent's cheap.", tr:'随便吧。至少房租便宜。'},
-      {who:'卡什', x:"...Don't tell him I said that.", tr:'……别告诉他我说过这话。'}
+      {who:'卡什', x:"Long story, darling.", tr:'说来话长，亲爱的。'},
+      {who:'卡什', x:"My old man got tired of me maxing out his cards.", tr:'我爹被我刷爆卡后，终于不耐烦了。'},
+      {who:'卡什', x:"So he shipped me over here.", tr:'然后就把我打包扔过来了。'},
+      {who:'卡什', x:"But... we hit some cute little snags, and we're going global now. Whatever.", tr:'不过……公司出了点儿可爱的小问题，现在也有在拓展国际方面的东西。谁知道呢。'},
+      {who:'卡什', x:"Didn't wanna come either, but good thing I've got you, huh?", tr:'我也不想来，不过幸好有你，是不是？'}
     ]});
   regBond({id:'bt_glasses', order:2, category:'秘密', need:0, reward:2,
     name:'「你的墨镜，为什么一直戴着？」',
@@ -2660,31 +2732,28 @@ function defineBuiltin(){
   regBond({id:'bt_bike', order:3, category:'喜好', need:4, reward:2,
     name:'「你那辆机车……」',
     lines:[
-      {who:'卡什', x:"Oh, you noticed?", tr:'哦，你注意到了？'},
-      {who:'卡什', x:"Red. Custom paint. Took me two months to get it right.", tr:'红色，定制涂装。花了两个月才调对。'},
-      {who:'卡什', x:"Best thing I brought from home.", tr:'是我从家里带过来的最好的东西。'},
+      {who:'卡什', x:"Oh, you noticed?", tr:'噢，你注意到了？'},
+      {who:'卡什', x:"Red, and custom paint. Took me two months to get it right.", tr:'红色，以及优秀的定制涂装。这花了我两个月噢～'},
+      {who:'卡什', x:"Best thing I brought from home.", tr:'它是我带过来的最好的家伙。'},
       {who:'卡什', x:"Wanna ride sometime? I drive fast.", tr:'想不想哪天出去兜一圈？我开很快的。'},
       {who:'你', x:'……多快？'},
-      {who:'卡什', x:"Fast enough to make you forget your name.", tr:'快到让你连自己叫什么都忘了。'},
-      {who:'卡什', x:"...Kidding. Mostly.", tr:'……开玩笑的。大部分是。'}
+      {who:'卡什', x:"Fast enough to make you forget every thing!", tr:'快到让你忘掉一切！'},
     ]});
   regBond({id:'bt_work', order:4, category:'日常', need:8, reward:2,
     name:'「你平时都干什么？」',
     lines:[
-      {who:'卡什', x:"Me? Whatever I want.", tr:'我？想干嘛就干嘛。'},
-      {who:'卡什', x:"Okay, okay. I do some consulting stuff. Remote.", tr:'好吧好吧。我做一些咨询类的活儿。远程。'},
-      {who:'卡什', x:"Boring as hell, but it pays the bills.", tr:'无聊得要死，但能付账单。'},
-      {who:'卡什', x:"Rest of the time? Bars, road trips, parties.", tr:'剩下的时间？酒吧、公路旅行、派对。'},
-      {who:'卡什', x:"You should come out with me sometime. You look like you need it.", tr:'你该哪天跟我出去转转。你看起来需要这个。'}
+      {who:'卡什', x:"Me? Whatever I want.", tr:'我吗？大概想干嘛就干嘛。'},
+      {who:'卡什', x:"Bars, road trips, parties.", tr:'酒吧、公路旅行、派对。'},
+      {who:'卡什', x:"You should come out with me sometime. You look like you need it.", tr:'你该哪天跟我出去转转，你看起来需要这个。'}
     ]});
   regBond({id:'bt_ex', order:5, category:'恋爱', need:12, reward:2,
     name:'「你以前谈过恋爱吗？」',
     lines:[
       {who:'卡什', x:"...", tr:'……'},
       {who:'卡什', x:"That's a heavy question for a Tuesday.", tr:'周二问这个有点沉重。'},
-      {who:'卡什', x:"Yeah. Lots. None of them meant anything.", tr:'谈过。很多次。没一次当真的。'},
-      {who:'卡什', x:"I don't do... commitment. You know?", tr:'我不搞……承诺那一套。你懂吧？'},
-      {who:'卡什', x:"People get bored of me. I get bored of them. It's fair.", tr:'别人会腻我，我也会腻别人。挺公平的。'},
+      {who:'卡什', x:"Yeah. Lots. None of them meant anything.", tr:'是啊谈过，很多次，但没一次当真的。'},
+      {who:'卡什', x:"I don't do... commitment. You know?", tr:'你知道，我不怎么…承诺别人。'},
+      {who:'卡什', x:"People get bored of me. I get bored of them. It's fair.", tr:'她们只是玩玩我，我也只是玩玩她们，挺公平的。'},
       {who:'卡什', x:"...Why are you looking at me like that?", tr:'……你干嘛那样看我？'}
     ]});
   regBond({id:'bt_stay', order:6, category:'日常', need:18, reward:3,
@@ -2692,59 +2761,75 @@ function defineBuiltin(){
     lines:[
       {who:'卡什', x:"Huh. Never thought about it.", tr:'哈。没想过。'},
       {who:'卡什', x:"I don't usually plan that far ahead.", tr:'我一般不计划那么远的事。'},
-      {who:'卡什', x:"But... I like it here. The quiet. The space.", tr:'不过……我喜欢这儿。安静，宽敞。'},
-      {who:'卡什', x:"...And the company's not bad either.", tr:'……而且室友也不赖。'},
+      {who:'卡什', x:"But... I like it here. The quiet. The space.", tr:'不过，我喜欢这儿，安静，宽敞。'},
+      {who:'卡什', x:"...And the company's not bad either.", tr:'…而且室友也不赖啊。'},
       {who:'卡什', x:"Don't let that go to your head.", tr:'别得意。'}
     ]});
   regBond({id:'bt_you', order:7, category:'恋爱', need:25, reward:3,
     name:'「你觉得我是个什么样的人？」',
     lines:[
       {who:'卡什', x:"Hmm.", tr:'嗯。'},
-      {who:'卡什', x:"Quiet. Careful. You think too much.", tr:'安静。小心。想太多。'},
-      {who:'卡什', x:"But you're not boring. I can tell.", tr:'但你不无聊。我看得出来。'},
-      {who:'卡什', x:"You got that look, like you're always bracing for something.", tr:'你有一种表情，像总在防备着什么。'},
-      {who:'卡什', x:"...I get that. More than you'd think.", tr:'……我懂。比你想象的懂。'},
-      {who:'卡什', x:"Anyway. My turn next time.", tr:'行了。下次换你答。'}
+      {who:'卡什', x:"You're basically a brick wall, darling.", tr:'你简直是个面瘫，亲爱的。'},
+      {who:'卡什', x:"Kidding. You're always calm, cool, and way too quiet — you should really fix that.", tr:'开玩笑的，我觉得你永远冷静、沉着，而且话少，这点你最好改改。'},
+      {who:'卡什', x:"You're the reliable one, so you'll keep fixing my stuff for me, won't you?", tr:'你最靠谱了，所以你以后也会继续帮我修东西，是不是？'}
     ]});
   regBond({id:'bt_secret', order:8, category:'秘密', need:35, reward:4,
     name:'「你有没有什么不想让人知道的事？」',
     lines:[
       {who:'卡什', x:"...", tr:'……'},
       {who:'卡什', x:"You're really asking that?", tr:'你真要问这个？'},
-      {who:'卡什', x:"Okay. Fine. One thing.", tr:'行。好吧。就一件。'},
-      {who:'卡什', x:"I can't see very well. Glasses aren't just for show.", tr:'我视力不太好。墨镜不只是为了好看。'},
-      {who:'卡什', x:"Half a meter out, everyone's a blur to me.", tr:'半米之外，我看谁都是一团糊。'},
+      {who:'卡什', x:"Okay. Fine. One thing.", tr:'行，好吧，就一件。'},
+      {who:'卡什', x:"I can't see very well. Glasses aren't just for show.", tr:'我视力不太好……墨镜不只是为了帅。'},
+      {who:'卡什', x:"Honestly, my eyesight's pretty bad.", tr:'说实在的，其实可以说是很糟糕。'},
       {who:'卡什', x:"...Don't make it weird, alright?", tr:'……别搞得怪怪的，行吗？'},
-      {who:'你', x:'……嗯。'},
+      {who:'你', x:'嗯。'},
       {who:'卡什', x:"Thanks.", tr:'谢了。'}
     ]});
 
+  /* ================= 第一章（新版） ================= */
   Game.defineChapter({
     id:'ch01', order:1, mode:'main',
-    title:'第一章 · 金毛',
-    subtitle:'合租屋 · 一辆红色机车 · 和新室友',
+    title:'第一章 · 新家与新室友',
+    subtitle:'这便是你合租生活的开始。',
     start:'open',
     endings:{
-      e_ch1:{name:'第一章 · 完', desc:'你的新室友到了。金毛，吵，墨镜不离身，中文水平约等于零。'}
+      e_ch1:{name:'第一章 · 完', desc:'从这位加州小伙开着机车出现在楼下的那一刻起，你的合租生活就注定不会安静。'}
     },
     nodes:{
       open:{
         steps:[
-          {t:'n', x:'下午三点，你蹲在玄关给路由器插网线，脚边堆着三个还没拆的纸箱。'},
-          {t:'n', x:'房东早上发来一条消息：「今天新室友到，是个外国人，你多担待。」'},
-          {t:'n', x:'你没太当回事。外国人怎么了，还能是头熊不成。'},
-          {t:'n', x:'——然后楼下传来一声引擎的轰鸣。'},
-          {t:'n', x:'那种整个小区的窗户都在跟着抖的动静。'},
-          {t:'n', x:'你扒着窗台往下看。一辆亮红色机车斜停在单元门口，骑手单脚撑地，摘头盔的动作干脆利落。'},
-          {t:'n', x:'一头金发在午后的光里晃得人眼睛疼。'},
-          {t:'n', x:'……好吧。还挺帅的。'},
+          {t:'n', x:'你叫莫桁，大学毕业后还正处于gap时期——插句题外话，现在学历真是通货膨胀了，硕士也要gap吗？'},
+          {t:'n', x:'总之你目前确实经济拮据，所以准备在市中心附近租一套合租房。'},
+          {t:'n', x:'你看中的这套房挺有来头，据说对面来合租的室友是个来体验生活的富二代，虽然零用钱给的不多让那人沦落到要来合租的境地（这点上你就理解不了有钱人），但房源是那人家里安排好的，环境不错采光很好，附近还是条商业街；'},
+          {t:'n', x:'更别提对来「应聘」合租的人大气十足，房租减半水电全免，除了要进行难挨的社交外，这条件简直可以说是完美。'},
+          {t:'n', x:'说实在的，要不是自己那惊天地泣鬼神的人生经历造就了如今的钱包危机，你一丁点儿都不想和人合租，毕竟你可以说是十分甚至有九分地厌恶社交。'},
+          {t:'n', x:'你不善表达，又懒得惹是生非，毕竟祸从口出，多说多错，少说少错，不说不错，不错不错。'},
+          {t:'n', x:'如今，你已经可以想象得到自己以后合租的悲惨生活。'},
+          {t:'n', x:'虽然这对你来说不甚重要，但要不还是想个自我介绍吧？'},
+          {t:'hr'},
+          {t:'n', x:'你叫莫桁，但你通常对所有的人隐去自己的全名，包括你也准备对新来的室友自我介绍时使用一个潦草的花名「小桁」，因为「莫」是随你父亲的姓。'},
+          {t:'n', x:'你不愿向任何人提起你这个父亲，他在国内出了轨，母亲检查出癌症后更是剥夺了医药费，性格暴力，情感淡漠，虽然没有家暴，但在母亲因病早逝后你依旧恨透了父亲。'},
+          {t:'n', x:'你自认家庭背景实在糟糕，也许自己早在小时候的某一天患上了严重的情感障碍，只不过是你根本懒得去医院检查罢了。'},
+          {t:'hr'},
+          {t:'n', x:'一大早的，你便率先出发去那个公寓。'},
+          {t:'n', x:'身上大包小包的行李比起那些需要搬家公司用车拉的要少得多，毕竟你走得干干净净，宿舍也没什么自己的东西，可以说是几个背包就能装下全部家当。'},
+          {t:'n', x:'清晨的阳光很刺眼，背着沉重行囊回望了一下待了几年的宿舍楼，以及十分宏伟镶了金边的大学校门，发觉自己也没什么需要告别的朋友。'},
+          {t:'n', x:'都在市中心的缘故，路程不远（这也是你选中它的其中一个原因），没多久你就到了。'},
+          {t:'n', x:'把少得可怜的个人物品简单安置了一下，你站在房间中央环顾四周，自己向来有提前准备好一切的好习惯。'},
+          {t:'n', x:'一转眼便下午三点，你蹲在玄关给路由器插网线，脚边堆着三个还没拆的纸箱。'},
+          {t:'n', x:'终于得了闲打开手机瞥一眼，发现房东早上就发来一条消息：「今天下午新室友到，是个外国人，你多担待。」'},
+          {t:'n', x:'你没太当回事。外国人怎么了，自己也算半个外国人呢，你的母亲是加拿大籍华裔，而你和母亲的国籍一样。'},
+          {t:'n', x:'虽然并没有长时间在加拿大生活，出生不久后就因为父亲的缘故回到国内接受教育，但说到底也是个加拿大籍的，更不用说自己的语言天赋很高，中文、英语、法语等等都精通，无论来的哪国人，交流方面至少都不会有大问题。'},
+          {t:'n', x:'——说曹操曹操到，没多久楼下就传来一声引擎的轰鸣。'},
+          {t:'n', x:'你扒着窗台往下看，只见一辆亮红色机车斜停在单元门口，骑手单脚落地，摘头盔的动作干脆利落，一头金发在午后的光里晃得人眼睛疼。'},
+          {t:'n', x:'……长得倒是挺帅的。'},
           {t:'n', x:'三分钟后，门铃响了。'},
           {t:'hr'},
-          {t:'n', x:'你拉开门。'},
-          {t:'n', x:'门外的人比你想象的还要高，目测一米八往上，墨镜架在鼻梁上，嘴角右下方有一颗痣。'},
-          {t:'n', x:'他低头看你——你总觉得那个角度有点居高临下的意思，但仔细看又不太像在看你。'},
+          {t:'n', x:'你拉开门，抬头目光便撞上如同入室抢劫般的热情视线。'},
+          {t:'n', x:'门外的人比你想象的还要高，目测一米八往上，一头耀眼的金发非常抢镜，张扬极了、夺人视线。'},
+          {t:'n', x:'室内已经隔绝了午后的阳光，然而这人墨镜仍架在鼻梁上，你一头雾水，怕不是个爱装逼耍帅的货色。'},
           {t:'s', who:'卡什', x:"Yo. You must be the new roomie.", tr:'哟。你肯定就是我那个新室友了。'},
-          {t:'n', x:'……中文呢？说好的多担待呢？'}
+          {t:'n', x:'……中文呢？说好的要我多担待呢？'}
         ],
         next:'c_first'
       },
@@ -2759,32 +2844,32 @@ function defineBuiltin(){
       en:{
         steps:[
           {t:'s', who:'你', x:"Yeah, that's me. Come in."},
-          {t:'n', x:'他咧嘴一笑，露出一口白得晃眼的牙。'},
-          {t:'s', who:'卡什', x:"Oh shit, you speak English? Thank god.", tr:'卧槽，你会说英语？谢天谢地。'},
-          {t:'n', x:'……你有点后悔了。'}
+          {t:'n', x:'他咧嘴一笑，你这才发觉他嘴角有一颗痣，跟着笑容上扬。'},
+          {t:'s', who:'卡什', x:"Jesus, you can speak English? Thank god.", tr:'天，你会说英语？谢天谢地。'},
+          {t:'n', x:'……糟糕的是，看上去你们以后都必须用英语交流了。'}
         ],
         next:'moving'
       },
       zh:{
         steps:[
           {t:'s', who:'你', x:'嗯，是我。进来吧。'},
-          {t:'n', x:'他歪了歪头，墨镜后面的眉毛皱起来。'},
+          {t:'n', x:'他歪了歪头，神情有些不知所措。'},
           {t:'s', who:'卡什', x:"Uh... huh?", tr:'呃……啊？'},
-          {t:'s', who:'卡什', x:"Sorry, my Chinese is, like, basically zero.", tr:'抱歉，我的中文基本上等于零。'},
-          {t:'n', x:'你看着他，他看着别处。'},
-          {t:'n', x:'你意识到，以后的日子大概都要这样度过了。'}
+          {t:'s', who:'卡什', x:"Sorry dude, my Chinese is, like, basically zero.", tr:'抱歉哥们，我的中文水平，差不多，等于零。'},
+          {t:'n', x:'你看着他，他看着别处，你几乎在这个张扬洒脱的家伙身上看出一点窘迫。'},
+          {t:'n', x:'……你意识到以后的日子大概都要这样度过了。'}
         ],
         next:'moving'
       },
       moving:{
         steps:[
           {t:'hr'},
-          {t:'n', x:'他扛着两个行李箱进门，路过玄关时肩膀蹭了一下墙——这地方对他来说确实有点矮。'},
-          {t:'n', x:'他把墨镜往头顶一推，你这才看清他眼睛是浅碧色的。'},
-          {t:'s', who:'卡什', x:"Damn, this place is smaller than my bathroom back home.", tr:'靠，这地方比我家浴室还小。'},
+          {t:'n', x:'他从房东手里接过提前托运过来的行李箱，拖着它进门时卡什显得有些吃力，你已经大概猜到里面都是些什么没用的花哨玩意儿。'},
+          {t:'n', x:'他随手把墨镜往头顶一推，你这才看清他眼睛是浅蓝色的。'},
+          {t:'s', who:'卡什', x:"Oh shit, this place is smaller than my bathroom back home.", tr:'靠，这地方比我家浴室还小。'},
           {t:'n', x:'你决定不问他家浴室到底多大，免得自己伤心。'},
           {t:'s', who:'卡什', x:"But hey, roomie. Name's Cash. Cash Rockwell.", tr:'不过嘛，室友。我叫卡什。卡什·洛克维尔。'},
-          {t:'n', x:'他伸出手，掌心朝上，是那种很欠揍的、理所当然地期待别人握上来的姿势。'}
+          {t:'n', x:'他以一种理所当然地期待别人握上来的姿势，朝你伸出手。'}
         ],
         next:'c_name'
       },
@@ -2792,23 +2877,24 @@ function defineBuiltin(){
         steps:[
           {t:'c', x:'握手吗？', o:[
             {l:'握上去', to:'shake', fx:{bond:3}},
-            {l:'只报名字，手没动', to:'noshake', fx:{bond:-1}}
+            {l:'只报名字，不握手', to:'noshake', fx:{bond:-1}}
           ]}
         ]
       },
       shake:{
         steps:[
+          {t:'n', x:'你决定先给他顺顺毛，也顺便实行一个看起来有点简陋的破冰仪式。'},
+          {t:'n', x:'这样想着，你摆出一副浅淡的笑脸来握上他的手。'},
           {t:'s', who:'你', x:'小桁。'},
-          {t:'n', x:'你把手伸过去。他的手掌比你大一圈，握得又紧又用力，还上下晃了两下。'},
-          {t:'s', who:'卡什', x:"Nice grip, roomie.", tr:'握得不错啊，室友。'},
-          {t:'n', x:'……这算哪门子的夸奖。'}
+          {t:'s', who:'卡什', x:"Oh, this is my first time meeting a Chinese person with this surname.", tr:'噢，我第一次见姓这个的中国人。'},
+          {t:'n', x:'你没有解释，只是象征性地回以微笑，简单一番心里建设后接受了新室友似乎文化水平低下的事实，默认了他的感叹。'}
         ],
         next:'finale'
       },
       noshake:{
         steps:[
           {t:'s', who:'你', x:'小桁。'},
-          {t:'n', x:'你没伸手，只是报了个名字。'},
+          {t:'n', x:'你故意没伸手，只是淡淡地报了个名字，显得卡什悬在空中的那只手有些许难堪。'},
           {t:'n', x:'他挑了下眉，很自然地收回手，插进兜里。'},
           {t:'s', who:'卡什', x:"Suit yourself, roomie.", tr:'随你便咯，室友。'}
         ],
@@ -2817,12 +2903,91 @@ function defineBuiltin(){
       finale:{
         steps:[
           {t:'hr'},
-          {t:'n', x:'他拖着行李往次卧走，路过你身边的时候，肩膀擦过你的肩膀。'},
-          {t:'n', x:'一股很淡的味道——海盐、柑橘，还有点被太阳晒过的暖意。'},
-          {t:'s', who:'卡什', x:"Oh — one thing.", tr:'哦——还有一件事。'},
-          {t:'s', who:'卡什', x:"I don't cook. I don't clean. I pay rent on time. Deal?", tr:'我不做饭，不打扫，但我会按时交房租。成交？'},
-          {t:'n', x:'你还没来得及回答，他已经消失在门后了。'},
-          {t:'n', x:'——以及一个你还没发现的事实：这位新室友，半米之外人畜不分。'},
+          {t:'n', x:'你看着他拖着行李箱推开门，随即与一个光秃秃的床板大眼对小眼，准确来说只是他单方面的懵逼地盯着看。'},
+          {t:'s', who:'卡什', x:"Oh my, So this is... Uh, Do all Chinese people sleep like this...?", tr:'我天……所以这是……呃，中国人都是这样睡觉的吗？'},
+          {t:'n', x:'……这是个傻逼，尽管这不太礼貌，但你的脑子还是迅速给这个人的形象做了处理并下发结论。'},
+          {t:'n', x:'但不管怎么说你深吸一口气经历了某种忏悔后开口。'},
+          {t:'s', who:'你', x:'……不是，只是没有配床垫。'},
+          {t:'s', who:'卡什', x:"Oh... uh, sorry.", tr:'噢……呃，不好意思。'},
+          {t:'n', x:'太过尴尬而激发出的礼貌让你对他的傻逼印象有所回温。'},
+          {t:'n', x:'你看见卡什的眼神肉眼可见地从一副难评又含有某种「兄弟我可以理解」的惊诧变成尴尬，从而转过头去准备看起来像若无其事地在做自己的事。'},
+          {t:'n', x:'但很快他又不得不重新看向你，以那种很无助的眼神，让人忍不住心生爱怜……停，并没有。'},
+          {t:'hr'},
+          {t:'s', who:'卡什', x:"Hey, um, sorry I—oh fuck, I can't say it.", tr:'嘿，那个，不好意思，噢我靠我说不出口。'},
+          {t:'n', x:'你安静地看他与自己进行某种搏斗，其实你知道他大概想说什么，无非是现在订床垫可能来不及但问能不能在你屋里睡一晚又很冒昧。'},
+          {t:'n', x:'但出于某种原因，你暂时不准备善良地给他一个台阶下，抱臂靠在墙边看他，示意其继续说下去。'},
+          {t:'s', who:'卡什', x:"It might not be doable today. Mind... squeezing me in, dude?", tr:'今天可能来不及，方便……挤挤吗兄弟。'},
+          {t:'n', x:'你觉得他可能没怎么对别人提过这种请求，尴尬的神情看上去有些好笑。'},
+          {t:'n', x:'面前的人扯着嘴角扯出一个笑来。'}
+        ],
+        next:'c_share'
+      },
+      c_share:{
+        steps:[
+          {t:'c', x:'答应吗？', o:[
+            {l:'答应', to:'share_yes', fx:{bond:3}},
+            {l:'拒绝', to:'share_no', fx:{bond:-2, chaos:1}}
+          ]}
+        ]
+      },
+      share_yes:{
+        steps:[
+          {t:'s', who:'你', x:'可以，晚上你再过来吧。'},
+          {t:'n', x:'你没有再继续为难他的意思，毕竟室友嘛，能帮一点是一点，再说也不是什么大事。'},
+          {t:'n', x:'卡什勾起嘴角朝你笑着，得寸进尺地勾住你的肩膀，配上一头在灯下看起来闪着亮光的金发，明媚张扬到不自知地夺人视线。'},
+          {t:'s', who:'卡什', x:"No problem, Thanks, dude.", tr:'谢了！兄弟。'},
+          {t:'hr'},
+          {t:'n', x:'晚上十点。'},
+          {t:'n', x:'你刚洗完澡出来，头发还滴着水，就听见有人在敲门。'},
+          {t:'n', x:'你趿着拖鞋去开门，已经猜到是哪尊大佛。'},
+          {t:'n', x:'果不其然，卡什站在门口，抱着一床被卷起来的被子和一个枕头，穿得比白天那副死装逼样要随便多了。'},
+          {t:'n', x:'是T恤和运动裤，你惊讶于他睡觉穿得居然还挺多，不过大概也有借住在你这里的缘故。'},
+          {t:'n', x:'应该是刚洗完澡，卡什那头金发有些软地垂下来，不再像白天那样张牙舞爪，整个人都顺眼了许多，你这样想。'},
+          {t:'n', x:'只是那个墨镜依旧挂在他的脖子上，你感觉这有点诡异了，这么宝贝？难不成是白月光前女友送的？'},
+          {t:'s', who:'卡什', x:"I'm here, darling—ah, I mean, darling roommate.", tr:'我来了亲爱的，啊我是说亲爱的室友。'},
+          {t:'n', x:'你侧身让他进来。'},
+          {t:'hr'},
+          {t:'n', x:'你房间还很朴素，只有一张床、一张桌、一把椅子。'},
+          {t:'n', x:'你把椅子拉到床边，正准备坐下，回头却看见卡什已经把枕头往你床上一扔，整个人大剌剌地坐在了床沿。'},
+          {t:'s', who:'卡什', x:"So... which side is mine?", tr:'那……哪边是我的？'},
+          {t:'s', who:'你', x:'……你睡地上。'},
+          {t:'s', who:'卡什', x:"What? No way. I'm a guest, friend!", tr:'什么？不行。我是客人啊朋友。'},
+          {t:'s', who:'你', x:'你也住这儿，理论上不算客人。'},
+          {t:'s', who:'卡什', x:"Uh, fair enough.", tr:'呃，有道理。'},
+          {t:'n', x:'他嘴上说着，却完全没有起身的意思，反倒往床头一靠，手肘支在床头，手掌托着下巴看向你。'},
+          {t:'s', who:'卡什', x:"Okay fine, I'll sleep on the floor. But let me stay like this for five minutes.", tr:'好吧好吧，我睡地板。但让我这样躺五分钟。'},
+          {t:'n', x:'你站在床边看着他，他带了点挑衅的笑，对上你沉默的目光。'},
+          {t:'hr'},
+          {t:'n', x:'最后你当然没有让他睡地板。'},
+          {t:'n', x:'两个人一人一半，中间隔了一枕头当界线。'},
+          {t:'n', x:'卡什这人看着张扬，真躺下来的时候倒意外地安静，连呼吸都很轻。'},
+          {t:'n', x:'倒是你，翻来覆去怎么都睡不着。'},
+          {t:'n', x:'不知道过了多久，世界归于寂静，你也陷入了梦乡。'}
+        ],
+        next:'ending'
+      },
+      share_no:{
+        steps:[
+          {t:'s', who:'你', x:'？Are you kidding me?'},
+          {t:'n', x:'他耸了耸肩。'},
+          {t:'s', who:'卡什', x:"Alright, so heartless, babe...", tr:'好吧，真是无情啊宝贝儿……'},
+          {t:'s', who:'你', x:'……'},
+          {t:'s', who:'你', x:"Don't call me that."},
+          {t:'n', x:'你已经失去了一切的力气和手段，只想扇一巴掌面前这个举止轻浮的人。'},
+          {t:'n', x:'理智阻止了你这么做，但同时，你觉得你拒绝这家伙是一个明智的选择。'},
+          {t:'n', x:'卡什看你半天没松口，终于还是耸了耸肩，退让一步。'},
+          {t:'s', who:'卡什', x:"Okay, okay. Chill. I'll figure it out.", tr:'行行行，别激动。我自己想办法。'},
+          {t:'n', x:'他一边说着一边掏出手机，倚在门框上不知道在跟谁发消息。'},
+          {t:'n', x:'你不打算管他，转身回自己屋里。'}
+        ],
+        next:'ending'
+      },
+      ending:{
+        steps:[
+          {t:'hr'},
+          {t:'n', x:'总之，这样那样的合租生活，就此开始了。'},
+          {t:'n', x:'起初你只希望那个未曾见面的室友千万别和你有过多对话。'},
+          {t:'n', x:'但很遗憾，从这位加州小伙开着机车出现在楼下的那一刻起，这个愿望就已经彻底落空。'},
           {t:'hr'},
           {t:'end', id:'e_ch1'}
         ]
@@ -2903,6 +3068,7 @@ function init(){
     S.attrs = freshAttrs();
     renderHud();
     bindAll();
+    bindGlobalSfx();
 
     if(loadSave()){
       updateChapterTitle();
